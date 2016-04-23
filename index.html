@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <title>defrecord/deftype in Clojure and ClojureScript</title>
+    <link rel="stylesheet" href="deck.js/core/deck.core.css"/>
+    <link rel="stylesheet" href="deck.js/themes/style/swiss.css"/>
+    <!-- <link rel="stylesheet" href="deck.js/themes/transition/horizontal-slide.css"/> -->
+    <link rel="stylesheet" href="deck.js/extensions/hash/deck.hash.css"/>
+    <link rel="stylesheet" href="deck.js/extensions/menu/deck.menu.css"/>
+    <link rel="stylesheet" href="custom.css"/>
+    <script src="deck.js/modernizr.custom.js"></script>
+  </head>
+  <body class="deck-container">
+    <section class="slide">
+      <h1>defrecord/deftype<br>in Clojure and ClojureScript</h1>
+      <div class="author"><p>Michał Marczyk</p></div>
+    </section>
+
+    <section class="slide">
+      <h2>Introduction</h2>
+      <ul>
+        <li>
+          <code>defrecord</code>, <code>deftype</code>,
+          <code>defprotocol</code>, <code>reify</code> introduced in
+          Clojure 1.2
+        </li>
+        <li>
+          Early design notes available at
+          <br><a href="https://www.assembla.com/spaces/clojure/wiki/Datatypes">https://www.assembla.com/spaces/clojure/wiki/Datatypes</a>
+        </li>
+        <li>
+          Major goals:
+          <ul>
+            <li>
+              Low-level code generation facility good enough for PDSs &amp;c.
+              <br>(path towards Clojure-in-Clojure)
+            </li>
+            <li>
+              A Clojure take on records
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </section>
+    
+    <section class="slide">
+      <h2>Records in Computer Science</h2>
+      <blockquote cite="https://en.wikipedia.org/wiki/Record_(computer_science)">A record is a collection of fields, possibly of different data types, typically in fixed number and sequence.</blockquote>
+      <cite><a href="https://en.wikipedia.org/wiki/Record_(computer_science)">Record (computer science)</a> @ Wikipedia</cite>
+    </section>
+
+    <section class="slide">
+      <h2>Records in Clojure</h2>
+<pre style="border: none; padding: 0">
+(defrecord Foo [bar
+                ^long x
+                ^String description]
+
+  proto/IDescribed
+  (exciting-description? [this]
+    (and (some? description)
+         (.endsWith description "!")))
+
+  clojure.lang.IFn
+  …)
+
+;; defines class/ctor + two factory fns: ->Foo, map->Foo
+</pre>
+    </section>
+
+    <section class="slide">
+      <h2>Wacky maps</h2>
+      <ul>
+        <li>
+          Value-<strong>and-type</strong>-based <code>=</code> and <code>hash</code>
+        </li>
+        <li>
+          Value-based <code>.equals</code> and <code>.hashCode</code>
+        </li>
+      </ul>
+<pre style="border: none; padding: 0">
+(def a-map
+  {:bar {} :x 1 :description "A good Foo!"})
+
+(def a-foo (map->Foo a-map))
+
+a-foo
+;= user.Foo{:bar {} :x 1 :description "A good Foo!"}
+
+(= a-foo a-map)         ;= false
+(.equals a-foo a-map)   ;= true
+</pre>
+    </section>
+
+    <section class="slide">
+      <h2>Wacky maps cont’d</h2>
+      <ul>
+        <li>
+          Support <code>get</code>, <code>assoc</code>, <code>dissoc</code>, very fast keyword lookup of basis keys
+        </li>
+        <li>
+          Become plain maps on <code>dissoc</code> of basis key
+        </li>
+        <li>
+          Use <code>record?</code> to determine if input is a record
+        </li>
+        <li>
+          Use <code>getBasis</code> to obtain a vector of basis keys as symbols
+        </li>
+      </ul>
+<pre style="border: none; padding: 0">
+(Foo/getBasis)
+;= [bar x description]
+
+(record? a-foo)
+;= true
+
+(record? (dissoc a-foo :description))
+;= false
+</pre>
+    </section>
+
+    <section class="slide">
+      <h2>Wacky maps cont’d</h2>
+      <ul>
+        <li>
+          Not callable unless <code>clojure.lang.IFn</code> explicitly implemented
+        </li>
+        <li>
+          Remember about <code>applyTo</code> if you provide an implementation
+        </li>
+      </ul>
+<pre style="border: none; padding: 0">
+clojure.lang.IFn
+(invoke [this k]           (get this k))
+(invoke [this k not-found] (get this k not-found))
+(applyTo [this args]
+  (let [n (clojure.lang.RT/boundedLength args 2)]
+    (case n
+      0 (throw (clojure.lang.ArityException.
+                n (.. this (getClass) (getSimpleName))))
+      1 (.invoke this (first args))
+      2 (.invoke this (first args) (second args))
+      3 (throw (clojure.lang.ArityException.
+                n (.. this (getClass) (getSimpleName)))))))
+</pre>
+    </section>
+
+    <section class="slide">
+      <h2>Wacky maps cont’d</h2>
+      <ul>
+        <li>
+          Can have primitive fields
+        </li>
+        <li>
+          <code>assoc</code> will cast
+        </li>
+        <li>
+          Keyword access will box each time
+        </li>
+        <li>
+          Field access will not with type hints, in method bodies
+        </li>
+        <li>
+          Use <code>(set! *unchecked-math* :warn-on-boxed)</code> to check for boxing
+        </li>
+      </ul>
+<pre style="border: none; padding: 0">
+(assoc a-foo :x 3.5)
+;= #user.Foo{:bar {}, :x 3, :description "A good Foo!"}
+
+(let [another-foo (assoc a-foo :x 123456)]
+  (identical? (:x another-foo) (:x another-foo)))
+;= false
+</pre>
+    </section>
+
+    <section class="slide">
+      <h2>Wacky maps cont’d</h2>
+      <ul>
+        <li>
+          Support metadata
+        </li>
+        <li>
+          Use array/hash maps under the hood for extra keys
+        </li>
+        <li>
+          No transient support
+        </li>
+        <li>
+          No hash caching in Clojure as of 1.8
+        </li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <h2>UC #1: clear data semantics</h2>
+      <ul>
+        <li>
+          Example: <a href="https://github.com/rbrush/clara-rules">clara-rules</a>
+        </li>
+        <li>
+          Printed representation supported by the reader
+        </li>
+        <li>
+          To take this a step further:
+          <ul>
+            <li>
+              <a href="https://github.com/plumatic/schema">schema</a>’s <code>s/defrecord</code>
+            </li>
+            <li>
+              <a href="https://github.com/clojure/core.typed">core.typed</a>’s <code>ann-record</code>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <h2>UC #2: ‘computed properties’</h2>
+      <ul>
+        <li>
+          <code>IShape</code> and <code>Circle</code>, <code>Rectangle</code>…
+        </li>
+        <li>
+          Useful in practice: see <a href="https://github.com/clojure/core.async">core.async</a>’s IOC
+        </li>
+        <li>
+          Note that one could often precompute results instead (see ClojureScript’s analyser)
+        </li>
+        <li>
+          Trade-off between more complex data and potentially more repeated work
+        </li>
+        <li>
+          Use of methods may make it clearer which properties are primary, which are computed and how they are related
+        </li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <h2>UC #3: polymorphic ‘actions’</h2>
+      <ul>
+        <li>
+          Stuart Sierra’s <a href="https://github.com/stuartsierra/component">component</a>
+        </li>
+        <li>
+          Each component will have its own API (perhaps a group of functions in the same namespace)…
+        </li>
+        <li>
+          …but all can be started and stopped in the same way
+        </li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <h2>UC #4: use with Java APIs</h2>
+      <ul>
+        <li>
+          A clean, simple way to create a named class implementing an interface
+        </li>
+        <li>
+          Single-segment namespaces will visibly break <code>:load-ns</code>
+        </li>
+      </ul>
+<pre style="border: none; padding: 0">
+(defrecord ForJava […]
+
+  :load-ns true
+
+  …)
+</pre>
+    </section>
+
+    <section class="slide">
+      <h2>Interlude: <code>reify</code>, <code>specify</code></h2>
+      <ul>
+        <li>
+          When named type not required, interfaces/protocols can be implemented using <code>reify</code>
+        </li>
+        <li>
+          Metadata supported implicitly
+        </li>
+        <li>
+          Method bodies are closures
+        </li>
+        <li>
+          In ClojureScript, <code>specify</code> &amp; <code>specify!</code> operate on individual objects
+        </li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <h2><code>deftype</code> types</h2>
+<pre style="border: none; padding: 0">
+(deftype Foo [bar
+              ^:volatile-mutable ^long x
+              ^String description]
+
+  proto/IDescribed
+  (exciting-description? [this]
+    (and (some? description)
+         (.endsWith description "!")))
+
+  clojure.lang.IFn
+  …)
+
+;; defines class/ctor + positional factory fn ->Foo
+</pre>
+    </section>
+
+    <section class="slide">
+      <h2><code>deftype</code> types cont’d</h2>
+      <ul>
+        <li>
+          Host types with almost no functionality added (just <code>IType</code>, <code>getBasis</code>)
+        </li>
+        <li>
+          In ClojureScript, largely responsible for keeping protocols performant
+        </li>
+        <li>
+          Mutable fields on request
+          <ul style="margin-bottom: 0">
+            <li>
+              <code>:volatile-mutable</code> and <code>:unsynchronized-mutable</code> in Clojure
+              <br>(NB. fields marked mutable become private)
+            </li>
+            <li>
+              <code>:mutable</code> in ClojureScript
+            </li>
+          </ul>
+        </li>
+        <li>
+          Limitations in Clojure
+          <ul>
+            <li>
+              No mutually recursive types in Clojure
+              <br>(ClojureScript: <code>declare</code>)
+            </li>
+            <li>
+              No user-defined static methods – <code>(AVLMap/create …)</code>
+              <br>(ClojureScript: <code>set!</code> property on type)
+            </li>
+            <li>
+              Reference type hints on fields not actual field types
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <h2>Used for…</h2>
+      <ul>
+        <li>
+          ClojureScript PDSs, Atoms, multimethods…
+        </li>
+        <li>
+          core.async’s channels, buffers and various implementation details
+        </li>
+        <li>
+          Custom PDSs
+          <ul style="margin-bottom: 0">
+            <li>
+              gvec, core.rrb-vector, data.avl, data.int-map, data.priority-map, …
+            </li>
+          </ul>
+        </li>
+        <li>
+          <code>clojure.core/eduction</code>
+        </li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <h2>Custom PDSs</h2>
+      <ul>
+        <li>
+          Custom methods frequently useful
+          <ul style="margin-bottom: 0">
+            <li>
+              <code>deftype</code> only admits <code>Object</code>, interface and protocol methods
+            </li>
+            <li>
+              In ClojureScript, <code>Object</code> is a back door for arbitrary methods
+            </li>
+            <li>
+              In Clojure, use <code>gen-interface</code> / <code>definterface</code> / Java to declare
+            </li>
+            <li>
+              Interfaces useful for private, ‘closed’ abstractions (top performance a must, namespacing not required)
+            </li>
+          </ul>
+        </li>
+        <li>
+          <code>deftype</code> methods tend to be larger than equivalent Java methods
+          <ul style="margin-bottom: 0">
+            <li>
+              not least because of <code>checkcast</code> and various <code>clojure.lang.RT</code> casts
+            </li>
+            <li>
+              on the upside, many arithmetic ops have backing intrinsics that work nicely in method bodies
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <h2>Custom PDSs cont’d</h2>
+      <ul>
+        <li>
+          Microbenchmarks (Clojure 1.8), built-in sorted map vs data.avl
+          <ul>
+            <li>
+              Lookup terminating at root node: 13.56 ns built-in map, 11.14 ns data.avl
+            </li>
+            <li>
+              Lookup terminating at leftmost node (depth 16 built-in, 17 data.avl): 319 ns built-in map, 294 ns data.avl
+            </li>
+            <li>
+              Lookup terminating at rightmost node (depth 22 built-in, 17 data.avl): 609 ns built-in map, 409 ns data.avl
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <h2>Thank you!</h2>
+      <p>
+        Michał Marczyk<br/>
+        <a href="mailto:michal.marczyk@gmail.com">
+          michal.marczyk@gmail.com
+        </a>
+        <br/>
+        <a href="https://github.com/michalmarczyk/">
+          github.com/michalmarczyk
+        </a>
+        <br/>
+        mmarczyk on #clojure
+      </p>
+    </section>
+
+    <script src="deck.js/jquery-1.7.2.min.js"></script>
+    <script src="deck.js/core/deck.core.js"></script>
+
+    <script src="deck.js/extensions/hash/deck.hash.js"></script>
+    <script src="deck.js/extensions/menu/deck.menu.js"></script>
+
+    <script>$(function () { $.deck(".slide"); });</script>
+  </body>
+</html>
